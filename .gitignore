@@ -12,8 +12,14 @@ Packages/
 
 # Python
 .mlvenv/
+.venv/
+**/.venv/
 __pycache__/
 *.pyc
+
+# Centurion runtime artifacts
+logs/
+*.safetensors
 
 # CoreML models (large binaries)
 *.mlmodel
@@ -22,3 +28,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# scratch / temp probe files
+_*.txt
+_*.py
