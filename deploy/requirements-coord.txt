@@ -1,0 +1,7 @@
+# Dependencies for running the DiLoCo coordinator on a cloud server.
+# The coordinator is framework-agnostic: it only averages numpy/safetensors,
+# so it does NOT need torch or mlx (keeps the cloud install tiny).
+fastapi
+uvicorn
+numpy
+safetensors
