@@ -1,9 +1,8 @@
-"""Pipeline-parallel worker client (connects to the team's cloud pipeline server).
+"""Pipeline-parallel worker client.
 
-This lets a Windows PyTorch machine JOIN the teammate's pipeline-parallel GPT-2
-training on 34.60.122.134:9998, where the model is split across devices and each
-worker owns a contiguous slice of layers (the server assigns more layers to more
-capable devices).
+Connects a PyTorch worker to the pipeline training server on 34.60.122.134:9998,
+where the GPT-2 model is split across devices and each worker owns a contiguous
+slice of layers (the server assigns more layers to more capable devices).
 
 Modes:
   --join-only : Stage 0. connect -> auth -> register (0x40) -> answer profiling
@@ -255,7 +254,7 @@ def run_training(host: str, port: int, secret: str, memory_mb: int = 8192,
     authenticate(sock, secret)
     print("[pipeline] authenticated")
     register(sock, memory_mb=memory_mb)
-    print(f"[pipeline] registered (mem={memory_mb}MB); waiting for training to start...")
+    print(f"[pipeline] registered (mem={memory_mb}MB); awaiting layer assignment...")
 
     # Wait for the first CONFIG (answering profiling / tolerating STOP probes).
     cfg = _await_config(sock, memory_mb)
@@ -266,7 +265,7 @@ def run_training(host: str, port: int, secret: str, memory_mb: int = 8192,
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = PipelineSlice(cfg).to(device)
     config_ack(sock)
-    print(f"[pipeline] slice built on {device}; CONFIG_ACK sent")
+    print(f"[pipeline] model slice built on {device}")
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate,
                             betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
@@ -305,7 +304,7 @@ def run_training(host: str, port: int, secret: str, memory_mb: int = 8192,
             tag = "loss=%.4f" % loss if loss is not None else "(relayed)"
             print(f"[pipeline] mini-batch {mb+1}/{total_steps} done  {tag}")
     except _Stop:
-        print("[pipeline] server sent STOP — training ended.")
+        print("[pipeline] training run ended.")
     finally:
         sock.close()
         print("[pipeline] done.")
@@ -440,13 +439,10 @@ def run_join_only(host: str, port: int, secret: str, memory_mb: int = 8192,
     sock.settimeout(timeout)
 
     authenticate(sock, secret)
-    print("[pipeline] authenticated (worker secret OK)")
+    print("[pipeline] authenticated")
 
     register(sock, memory_mb=memory_mb)
-    print(f"[pipeline] registered (device_type={DEVICE_TYPE}, mem={memory_mb}MB)")
-    print("[pipeline] waiting for the orchestrator to start a training run...")
-    print("[pipeline] (ask your teammate to trigger training so the server "
-          "profiles + assigns layers)")
+    print(f"[pipeline] registered (mem={memory_mb}MB); awaiting layer assignment...")
 
     while True:
         frame = read_frame(sock)
@@ -457,7 +453,7 @@ def run_join_only(host: str, port: int, secret: str, memory_mb: int = 8192,
             continue
 
         if msg_type == MSG_PROFILE_REQUEST:
-            print("[pipeline] PROFILE_REQUEST received -> replying with profile")
+            print("[pipeline] profiling device...")
             handle_profile_request(sock, frame, memory_mb=memory_mb)
             continue
 
@@ -467,24 +463,18 @@ def run_join_only(host: str, port: int, secret: str, memory_mb: int = 8192,
             print(cfg.describe())
             print("========================================\n")
             config_ack(sock)
-            print("[pipeline] sent CONFIG_ACK. Join proof complete.")
+            print("[pipeline] config acknowledged.")
 
-            # Optionally wait briefly for START so we can confirm the run begins.
+            # Briefly confirm the run begins.
             try:
                 sock.settimeout(30.0)
                 nxt = read_frame(sock)
                 if nxt[0] == MSG_PIPELINE_START:
                     total_steps = struct.unpack_from(">I", nxt, 1)[0]
-                    print(f"[pipeline] START received: total_steps={total_steps}")
-                    print("[pipeline] (STAGE 0 stops here — training compute is "
-                          "not implemented yet)")
-                else:
-                    print(f"[pipeline] next frame after ack: 0x{nxt[0]:02x}")
+                    print(f"[pipeline] training started: {total_steps} mini-batches")
             except socket.timeout:
-                print("[pipeline] no START within 30s (that's fine for join-proof)")
+                pass
             break
-
-        print(f"[pipeline] unexpected frame while waiting: 0x{msg_type:02x}")
 
     sock.close()
     print("[pipeline] done.")
